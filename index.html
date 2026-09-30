@@ -139,6 +139,9 @@ html, body {
   text-align:center; padding:8px 16px 10px;
 }
 
+/* collapsed once a result is shown: only the Start Camera button remains */
+.scanner-card.compact #viewport, .scanner-card.compact .scan-hint { display:none; }
+
 /* scanner controls */
 .scan-controls {
   display:flex; gap:8px; padding:10px 12px;
@@ -562,6 +565,10 @@ function initZXing() {
 // ── Scanner ───────────────────────────────────
 let camStream = null, detectTimer = null;
 
+function showViewport(show) {
+  document.querySelector('.scanner-card').classList.toggle('compact', !show);
+}
+
 function onCode(code) {
   if (!scanning || !code || code === lastCode) return;
   lastCode = code;
@@ -573,6 +580,7 @@ async function startCam() {
   if (!window.isSecureContext || !navigator.mediaDevices?.getUserMedia) {
     return setStatus('Camera needs HTTPS and a supported browser. Use manual entry below.', 'error');
   }
+  showViewport(true);
   setStatus('<span class="spin"></span> Starting camera…', 'loading');
   document.getElementById('btnStart').style.display = 'none';
   document.getElementById('btnStop').style.display = 'flex';
@@ -761,6 +769,7 @@ function render(r, brand) {
     (r.tip?`<div class="tip-box">💡 <strong>Tip:</strong> ${esc(r.tip)}</div>`:'');
 
   document.getElementById('result').classList.add('show');
+  showViewport(false);
   tab('flags', document.querySelector('.tab'));
 }
 
