@@ -370,6 +370,18 @@ html, body {
   cursor:pointer; white-space:nowrap; flex-shrink:0;
 }
 
+/* not-found card */
+.notfound { display:none; background:#fff; border:1px solid #fde68a; border-radius:16px; padding:16px; margin-bottom:14px; box-shadow:0 4px 18px rgba(0,0,0,0.06); }
+.notfound.show { display:block; animation:slideUp 0.3s ease; }
+.notfound h3 { font-family:'Playfair Display',serif; font-size:16px; margin-bottom:4px; }
+.notfound p { font-size:12px; color:#4b5563; line-height:1.5; margin-bottom:10px; }
+.notfound input, .notfound textarea { width:100%; padding:11px 12px; border:2px solid var(--border); border-radius:10px; font-family:'DM Sans',sans-serif; font-size:14px; margin-bottom:8px; outline:none; }
+.notfound textarea { min-height:90px; resize:vertical; }
+.notfound input:focus, .notfound textarea:focus { border-color:var(--g-mid); }
+.nf-actions { display:flex; gap:8px; }
+.nf-actions .btn { padding:11px; }
+.btn-ghost { background:#f3f4f6; color:#374151; }
+
 /* quick chips */
 .chips { display:flex; flex-wrap:wrap; gap:6px; margin-bottom:14px; }
 .chip {
@@ -444,6 +456,18 @@ html, body {
       <div class="chip" onclick="lookupBarcode('021000658831')">Kraft Mac</div>
       <div class="chip" onclick="lookupBarcode('3017624010701')">Nutella</div>
       <div class="chip" onclick="lookupBarcode('5449000000996')">Coca-Cola</div>
+    </div>
+
+    <!-- Not found -->
+    <div class="notfound" id="notFound">
+      <h3>😕 We couldn't find that product</h3>
+      <p id="nfMsg"></p>
+      <input id="nfName" type="text" maxlength="120" placeholder="Product name (optional)"/>
+      <textarea id="nfIngredients" maxlength="3000" placeholder="Paste or type the ingredients from the package label"></textarea>
+      <div class="nf-actions">
+        <button class="btn btn-go" onclick="analyzeManual()">Analyze ingredients</button>
+        <button class="btn btn-ghost" onclick="hideNotFound()">Try another</button>
+      </div>
     </div>
 
     <!-- Status -->
@@ -653,15 +677,36 @@ function lookup() {
   lookupBarcode(v);
 }
 
+// ── Not-found fallback ────────────────────────
+function showNotFound(code) {
+  document.getElementById('nfMsg').textContent =
+    `Barcode ${code} isn't in Open Food Facts yet. It is a crowd-sourced database, so newer or smaller products are sometimes missing. You can type the ingredients from the label instead, or scan another product.`;
+  document.getElementById('notFound').classList.add('show');
+  document.getElementById('nfIngredients').focus();
+}
+function hideNotFound() {
+  document.getElementById('notFound').classList.remove('show');
+  setStatus('', '');
+}
+async function analyzeManual() {
+  const ingredients = document.getElementById('nfIngredients').value.trim();
+  if (ingredients.length < 5) return setStatus('Please paste the ingredient list first.', 'error');
+  const name = document.getElementById('nfName').value.trim() || 'Manual entry';
+  setStatus('<span class="spin"></span> Analyzing ingredients…', 'loading');
+  document.getElementById('notFound').classList.remove('show');
+  await analyze({ name, brand: '', ingredients, nutriscore: '', nova: '', additivesCount: null, nutri: {} });
+}
+
 // ── Open Food Facts ───────────────────────────
 async function lookupBarcode(code) {
+  document.getElementById('notFound').classList.remove('show');
   setStatus(`<span class="spin"></span> Looking up ${esc(code)}…`, 'loading');
   document.getElementById('btnLookup').disabled = true;
   try {
     const fields = 'product_name,product_name_en,brands,ingredients_text,ingredients_text_en,nutriments,nutriscore_grade,nova_group,additives_tags';
     const r = await fetch(`https://world.openfoodfacts.org/api/v2/product/${encodeURIComponent(code)}.json?fields=${fields}`);
     const d = await r.json();
-    if (d.status !== 1) return fail(`❌ Product not found for barcode ${esc(code)}. Try another.`);
+    if (d.status !== 1) { fail(''); return showNotFound(code); }
     const p = d.product;
     const n = p.nutriments || {};
     const name = p.product_name || p.product_name_en || 'Unknown Product';
