@@ -469,10 +469,12 @@ html, body {
           <button class="tab on"  onclick="tab('flags',this)">⚑ Concerns</button>
           <button class="tab"     onclick="tab('positives',this)">✓ Positives</button>
           <button class="tab"     onclick="tab('swaps',this)">🔄 Swaps</button>
+          <button class="tab"     onclick="tab('score',this)">📊 Score</button>
         </div>
         <div class="panel on" id="panel-flags"></div>
         <div class="panel"    id="panel-positives"></div>
         <div class="panel"    id="panel-swaps"></div>
+        <div class="panel"    id="panel-score"></div>
         <div class="nudge">💬 Scan another product or enter a barcode to compare</div>
       </div>
 
@@ -656,7 +658,7 @@ async function lookupBarcode(code) {
   setStatus(`<span class="spin"></span> Looking up ${esc(code)}…`, 'loading');
   document.getElementById('btnLookup').disabled = true;
   try {
-    const fields = 'product_name,product_name_en,brands,ingredients_text,ingredients_text_en,nutriments,nutriscore_grade,nova_group';
+    const fields = 'product_name,product_name_en,brands,ingredients_text,ingredients_text_en,nutriments,nutriscore_grade,nova_group,additives_tags';
     const r = await fetch(`https://world.openfoodfacts.org/api/v2/product/${encodeURIComponent(code)}.json?fields=${fields}`);
     const d = await r.json();
     if (d.status !== 1) return fail(`❌ Product not found for barcode ${esc(code)}. Try another.`);
@@ -667,7 +669,7 @@ async function lookupBarcode(code) {
     await analyze({
       name, brand: p.brands || '',
       ingredients: p.ingredients_text_en || p.ingredients_text || '',
-      nutriscore: p.nutriscore_grade || '', nova: p.nova_group || '',
+      nutriscore: p.nutriscore_grade || '', nova: p.nova_group || '', additivesCount: (p.additives_tags || []).length,
       nutri: { sugars: n['sugars_100g'], fat: n['fat_100g'], satFat: n['saturated-fat_100g'], salt: n['salt_100g'] }
     });
   } catch {
@@ -767,6 +769,11 @@ function render(r, brand) {
   document.getElementById('panel-swaps').innerHTML =
     (r.alternatives||[]).map(a=>`<div class="swap-item">🌿 ${esc(a)}</div>`).join('') +
     (r.tip?`<div class="tip-box">💡 <strong>Tip:</strong> ${esc(r.tip)}</div>`:'');
+
+  // Score breakdown (computed by rules, not by the AI)
+  document.getElementById('panel-score').innerHTML =
+    `<div class="flag-desc" style="margin-bottom:8px">Score is calculated from structured data (${esc(r.confidence || 'n/a')} confidence). The AI only writes the explanation.</div>` +
+    (r.breakdown || []).map(x => `<div class="pos-item"><span class="chk" style="min-width:44px;color:${x.points < 0 ? '#dc2626' : '#16a34a'}">${x.points > 0 && x.note !== 'starting point' ? '+' : ''}${esc(x.points)}</span><span>${esc(x.label)} <span style="color:var(--muted)">· ${esc(x.note)}</span></span></div>`).join('');
 
   document.getElementById('result').classList.add('show');
   showViewport(false);

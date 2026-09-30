@@ -1,10 +1,12 @@
 // Vercel serverless function: keeps the Anthropic key server-side.
+const { computeScore } = require('../lib/score');
 const MODEL = process.env.ANALYZE_MODEL || 'claude-haiku-4-5-20251001';
 
-const SYSTEM = `You are a food ingredients analyst. Given a product's ingredients and nutrition data, call the report_analysis tool.
+const SYSTEM = `You are a food ingredients analyst. Given a product's ingredients, nutrition data and a precomputed health score, call the report_analysis tool.
 Rules:
+- The score and verdict are computed by rules and given to you. Do not change them; write a summary that is consistent with them.
 - Only flag ingredients that literally appear in the provided ingredient list. Never invent ingredients.
-- If no ingredient list is provided, say so in the summary, return no flags, and keep the score neutral (45-55).
+- If no ingredient list is provided, say so in the summary and return no flags.
 - Keep explanations short, factual, and non-alarmist. This is general information, not medical advice.`;
 
 const TOOL = {
@@ -13,8 +15,6 @@ const TOOL = {
   input_schema: {
     type: 'object',
     properties: {
-      score: { type: 'integer', minimum: 0, maximum: 100 },
-      verdict: { type: 'string', enum: ['CLEAN', 'MODERATE', 'AVOID'] },
       productName: { type: 'string' },
       summary: { type: 'string', description: '2 plain-English sentences' },
       flags: {
@@ -35,7 +35,7 @@ const TOOL = {
       tip: { type: 'string' },
       allergens: { type: 'array', items: { type: 'string' } }
     },
-    required: ['score', 'verdict', 'productName', 'summary', 'flags', 'positives', 'alternatives', 'tip', 'allergens']
+    required: ['productName', 'summary', 'flags', 'positives', 'alternatives', 'tip', 'allergens']
   }
 };
 
@@ -47,7 +47,15 @@ module.exports = async (req, res) => {
 
   const b = req.body || {};
   const n = b.nutri || {};
+  const ingredients = clip(b.ingredients, 4000);
+  const result = computeScore({
+    nutriscore: clip(b.nutriscore, 3), nova: b.nova, additivesCount: b.additivesCount,
+    nutri: { sugars: n.sugars, satFat: n.satFat, salt: n.salt }, hasIngredients: ingredients.length > 0
+  });
   const prompt =
+    `Computed score: ${result.score}/100 (${result.verdict}). Scoring factors: ` +
+    result.breakdown.map(x => `${x.label} (${x.points})`).join('; ') + `
+` +
     `Product: ${clip(b.name, 200)}\nBrand: ${clip(b.brand, 200)}\n` +
     `Ingredients: ${clip(b.ingredients, 4000) || 'Not provided'}\n` +
     `Nutri-Score: ${clip(b.nutriscore, 3) || '?'} | NOVA group: ${clip(b.nova, 3) || '?'}\n` +
@@ -79,7 +87,7 @@ module.exports = async (req, res) => {
     }
     const block = (d.content || []).find(c => c.type === 'tool_use');
     if (!block) return res.status(502).json({ error: 'AI returned no analysis' });
-    return res.status(200).json(block.input);
+    return res.status(200).json({ ...block.input, ...result });
   } catch (e) {
     return res.status(502).json({ error: 'Could not reach AI service' });
   }
