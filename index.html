@@ -560,69 +560,76 @@ function initZXing() {
 }
 
 // ── Scanner ───────────────────────────────────
+let camStream = null, detectTimer = null;
+
+function onCode(code) {
+  if (!scanning || !code || code === lastCode) return;
+  lastCode = code;
+  stopCam();
+  lookupBarcode(code);
+}
+
 async function startCam() {
+  if (!window.isSecureContext || !navigator.mediaDevices?.getUserMedia) {
+    return setStatus('Camera needs HTTPS and a supported browser. Use manual entry below.', 'error');
+  }
   setStatus('<span class="spin"></span> Starting camera…', 'loading');
   document.getElementById('btnStart').style.display = 'none';
   document.getElementById('btnStop').style.display = 'flex';
+  document.getElementById('camDenied').style.display = 'none';
 
   try {
-    // Init ZXing if not done yet
-    if (!zxingReady) await initZXing();
-
-    // Request camera permission explicitly first
-    const stream = await navigator.mediaDevices.getUserMedia({
-      video: { facingMode: 'environment', width: { ideal: 1280 }, height: { ideal: 720 } }
-    });
-    stream.getTracks().forEach(t => t.stop()); // release, ZXing will re-acquire
-
+    // Open the camera once; try the rear camera, fall back to any camera.
+    try {
+      camStream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: { ideal: 'environment' } }, audio: false });
+    } catch (e) {
+      if (e.name === 'NotAllowedError') throw e;
+      camStream = await navigator.mediaDevices.getUserMedia({ video: true, audio: false });
+    }
     const videoEl = document.getElementById('scanVideo');
+    videoEl.srcObject = camStream;
+    videoEl.setAttribute('playsinline', '');
+    await videoEl.play();
 
     scanning = true;
     setStatus('🎯 Aim at barcode and hold steady', 'scanning');
     document.getElementById('scanHint').textContent = 'Scanning — hold steady…';
 
-    scanControls = await zxingReader.decodeFromConstraints(
-      { video: { facingMode: 'environment' } },
-      videoEl,
-      (result, err) => {
-        if (result && scanning) {
-          const code = result.getText();
-          if (code && code !== lastCode) {
-            lastCode = code;
-            stopCam();
-            lookupBarcode(code);
-          }
-        }
-        // Ignore NotFoundException — it fires continuously while scanning
-      }
-    );
-
-  } catch(e) {
+    if ('BarcodeDetector' in window) {
+      const det = new BarcodeDetector({ formats: ['ean_13', 'ean_8', 'upc_a', 'upc_e', 'code_128'] });
+      detectTimer = setInterval(async () => {
+        try {
+          const found = await det.detect(videoEl);
+          if (found.length) onCode(found[0].rawValue);
+        } catch (e) {}
+      }, 250);
+    } else {
+      if (!zxingReady) await initZXing();
+      scanControls = await zxingReader.decodeFromStream(camStream, videoEl, result => {
+        if (result) onCode(result.getText());
+      });
+    }
+  } catch (e) {
     console.error('Camera error:', e);
+    stopCam();
     const msg = e.name === 'NotAllowedError'
-      ? '📷 Camera permission denied — tap the 🔒 lock icon in your browser address bar → Permissions → Allow Camera, then reload.'
+      ? '📷 Camera permission denied — allow Camera for this site in your browser/site settings, then reload.'
       : e.name === 'NotFoundError'
       ? '📷 No camera found on this device.'
-      : `Camera error: ${esc(e.message)}. Try manual entry below.`;
+      : `Camera error (${esc(e.name)}): ${esc(e.message)}. Use manual entry below.`;
     document.getElementById('camDenied').style.display = 'block';
     document.getElementById('camDenied').innerHTML = `<div class="cam-icon">📷</div>${msg}`;
     setStatus(msg, 'error');
-    document.getElementById('btnStart').style.display = 'flex';
-    document.getElementById('btnStop').style.display = 'none';
   }
 }
 
 function stopCam() {
-  if (scanControls) {
-    try { scanControls.stop(); } catch(e) {}
-    scanControls = null;
-  }
+  if (scanControls) { try { scanControls.stop(); } catch(e) {} scanControls = null; }
+  if (detectTimer) { clearInterval(detectTimer); detectTimer = null; }
   scanning = false;
+  if (camStream) { camStream.getTracks().forEach(t => t.stop()); camStream = null; }
   const v = document.getElementById('scanVideo');
-  if (v && v.srcObject) {
-    v.srcObject.getTracks().forEach(t => t.stop());
-    v.srcObject = null;
-  }
+  if (v) v.srcObject = null;
   document.getElementById('btnStart').style.display = 'flex';
   document.getElementById('btnStop').style.display = 'none';
   document.getElementById('scanHint').textContent = 'Point at any food product barcode';
