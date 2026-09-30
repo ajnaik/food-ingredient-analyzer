@@ -1,0 +1,824 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8"/>
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover"/>
+<meta name="theme-color" content="#1a3a2a"/>
+<meta name="apple-mobile-web-app-capable" content="yes"/>
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent"/>
+<meta name="apple-mobile-web-app-title" content="Ingredient Lens"/>
+<meta name="description" content="Scan food barcodes and analyze ingredients with AI"/>
+<link rel="manifest" href="manifest.json"/>
+<link rel="apple-touch-icon" href="icons/icon-192.png"/>
+<title>Ingredient Lens</title>
+<link href="https://fonts.googleapis.com/css2?family=Playfair+Display:wght@700;800;900&family=DM+Sans:ital,wght@0,400;0,500;0,600;0,700;1,400&display=swap" rel="stylesheet"/>
+<script type="module">
+  import { BrowserMultiFormatReader, NotFoundException } from 'https://esm.sh/@zxing/browser@0.1.5';
+  import { DecodeHintType, BarcodeFormat } from 'https://esm.sh/@zxing/library@0.21.3';
+  window.ZXingBrowser = { BrowserMultiFormatReader, NotFoundException };
+  window.ZXingLibrary = { DecodeHintType, BarcodeFormat };
+  window.dispatchEvent(new Event('zxing-ready'));
+</script>
+
+<style>
+:root {
+  --g-deep:   #1a3a2a;
+  --g-mid:    #2d5a3d;
+  --g-light:  #4a9a60;
+  --g-pale:   #f0fdf4;
+  --g-border: #bbf7d0;
+  --amber:    #f59e0b;
+  --red:      #ef4444;
+  --cream:    #fdf8f0;
+  --white:    #ffffff;
+  --text:     #111827;
+  --muted:    #6b7280;
+  --border:   #e5e7eb;
+  --safe-top: env(safe-area-inset-top, 0px);
+  --safe-bot: env(safe-area-inset-bottom, 0px);
+}
+
+* { box-sizing: border-box; margin: 0; padding: 0; -webkit-tap-highlight-color: transparent; }
+
+html, body {
+  height: 100%; overflow: hidden;
+  font-family: 'DM Sans', sans-serif;
+  background: var(--g-deep);
+  color: var(--text);
+}
+
+/* ── SHELL ── */
+.app {
+  display: flex; flex-direction: column;
+  height: 100vh; height: 100dvh;
+  background: var(--cream);
+  overflow: hidden;
+}
+
+/* ── HEADER ── */
+.header {
+  background: linear-gradient(160deg, var(--g-deep) 0%, var(--g-mid) 100%);
+  padding: calc(var(--safe-top) + 14px) 20px 16px;
+  display: flex; align-items: center; justify-content: space-between;
+  flex-shrink: 0;
+  position: relative; overflow: hidden;
+  box-shadow: 0 4px 20px rgba(0,0,0,0.3);
+}
+.header::before {
+  content:''; position:absolute; inset:0;
+  background: radial-gradient(ellipse at 15% 50%, #4a9a6030 0%, transparent 60%);
+}
+.header-left { display:flex; align-items:center; gap:10px; position:relative; z-index:1; }
+.logo { font-size:26px; }
+.header-title { font-family:'Playfair Display',serif; font-size:18px; color:#fff; font-weight:800; }
+.header-sub { font-size:10px; color:#a7d9b8; font-style:italic; margin-top:1px; }
+.install-btn {
+  background: rgba(255,255,255,0.12); border:1px solid rgba(255,255,255,0.25);
+  color:#fff; padding:7px 14px; border-radius:999px;
+  font-family:'DM Sans',sans-serif; font-size:12px; font-weight:600;
+  cursor:pointer; transition:all 0.2s; position:relative; z-index:1;
+  display:none;
+}
+.install-btn.show { display:block; }
+.install-btn:active { background:rgba(255,255,255,0.2); }
+
+/* ── SCROLL AREA ── */
+.scroll-area {
+  flex: 1; overflow-y: auto; overflow-x: hidden;
+  -webkit-overflow-scrolling: touch;
+  padding: 16px 14px calc(var(--safe-bot) + 16px);
+}
+
+/* ── SCANNER CARD ── */
+.scanner-card {
+  background: var(--g-deep);
+  border-radius: 20px; overflow:hidden;
+  margin-bottom: 14px;
+  box-shadow: 0 8px 32px rgba(0,0,0,0.2);
+}
+#viewport {
+  position:relative; width:100%; height:230px;
+  overflow:hidden; background:#0a1a10;
+}
+#viewport video { width:100%; height:100%; object-fit:cover; display:block; }
+#viewport canvas.drawingBuffer {
+  position:absolute; top:0; left:0;
+  width:100%!important; height:100%!important; opacity:0;
+}
+
+/* scan overlay */
+.scan-overlay {
+  position:absolute; inset:0; pointer-events:none;
+  display:flex; align-items:center; justify-content:center;
+}
+.scan-box {
+  width:220px; height:110px; position:relative;
+}
+.scan-box::before,.scan-box::after,
+.scan-box b::before,.scan-box b::after {
+  content:''; position:absolute; width:22px; height:22px;
+  border-color:#4ade80; border-style:solid;
+}
+.scan-box::before { top:0;left:0; border-width:3px 0 0 3px; border-radius:4px 0 0 0; }
+.scan-box::after  { top:0;right:0; border-width:3px 3px 0 0; border-radius:0 4px 0 0; }
+.scan-box b::before { bottom:0;left:0; border-width:0 0 3px 3px; border-radius:0 0 0 4px; }
+.scan-box b::after  { bottom:0;right:0; border-width:0 3px 3px 0; border-radius:0 0 4px 0; }
+.scan-line {
+  position:absolute; left:6px; right:6px; height:2px;
+  background:linear-gradient(90deg,transparent,#4ade80,transparent);
+  top:50%; animation:scanline 2s ease-in-out infinite;
+}
+@keyframes scanline {
+  0%,100% { transform:translateY(-46px); opacity:0.3; }
+  50%      { transform:translateY(46px);  opacity:1; }
+}
+
+.scan-hint {
+  background:rgba(0,0,0,0.55); backdrop-filter:blur(4px);
+  color:#a7d9b8; font-size:11px; letter-spacing:0.4px;
+  text-align:center; padding:8px 16px 10px;
+}
+
+/* scanner controls */
+.scan-controls {
+  display:flex; gap:8px; padding:10px 12px;
+  background:rgba(0,0,0,0.2);
+}
+.btn {
+  display:flex; align-items:center; justify-content:center; gap:7px;
+  padding:12px; border-radius:12px; border:none;
+  font-family:'DM Sans',sans-serif; font-size:14px; font-weight:700;
+  cursor:pointer; transition:all 0.18s; flex:1;
+}
+.btn-go   { background:#4ade80; color:var(--g-deep); }
+.btn-go:active { background:#22c55e; transform:scale(0.97); }
+.btn-stop { background:rgba(255,255,255,0.1); color:#a7d9b8; border:1px solid rgba(255,255,255,0.15); }
+.btn-stop:active { background:rgba(255,255,255,0.18); }
+
+/* ── DIVIDER ── */
+.divider {
+  display:flex; align-items:center; gap:10px;
+  color:var(--muted); font-size:11px; font-weight:600;
+  text-transform:uppercase; letter-spacing:0.5px;
+  margin:2px 0 12px;
+}
+.divider::before,.divider::after { content:''; flex:1; height:1px; background:var(--border); }
+
+/* ── MANUAL ROW ── */
+.manual-row { display:flex; gap:8px; margin-bottom:14px; }
+.barcode-input {
+  flex:1; padding:13px 14px;
+  border:2px solid var(--border); border-radius:12px;
+  font-family:'DM Sans',sans-serif; font-size:15px;
+  background:#fff; outline:none; transition:border-color 0.2s;
+  -webkit-appearance:none;
+}
+.barcode-input:focus { border-color:var(--g-mid); }
+.barcode-input::placeholder { color:#b0b8c4; }
+.btn-lookup {
+  padding:12px 18px; border:none; border-radius:12px;
+  background:var(--g-deep); color:#fff;
+  font-family:'DM Sans',sans-serif; font-size:14px; font-weight:700;
+  cursor:pointer; transition:all 0.18s; white-space:nowrap;
+}
+.btn-lookup:active { background:var(--g-mid); transform:scale(0.97); }
+.btn-lookup:disabled { background:#9ca3af; cursor:not-allowed; transform:none; }
+
+/* ── STATUS ── */
+.status {
+  padding:11px 16px; border-radius:10px;
+  font-size:13px; font-weight:600; text-align:center;
+  margin-bottom:12px; display:none; animation:fadeIn 0.25s ease;
+}
+.status.show { display:block; }
+.status.scanning { background:#ecfdf5; color:#16a34a; border:1px solid #bbf7d0; }
+.status.loading  { background:#eff6ff; color:#1d4ed8; border:1px solid #bfdbfe; }
+.status.error    { background:#fef2f2; color:#dc2626; border:1px solid #fecaca; }
+.status.found    { background:#fefce8; color:#a16207; border:1px solid #fde68a; }
+
+@keyframes fadeIn { from{opacity:0;transform:translateY(4px)} to{opacity:1;transform:translateY(0)} }
+
+/* ── RESULT CARD ── */
+.result { display:none; animation:slideUp 0.35s ease; }
+.result.show { display:block; }
+@keyframes slideUp { from{opacity:0;transform:translateY(14px)} to{opacity:1;transform:translateY(0)} }
+
+.result-card {
+  background:var(--white); border-radius:20px;
+  overflow:hidden; box-shadow:0 6px 28px rgba(0,0,0,0.09);
+  margin-bottom:12px;
+}
+
+/* product header */
+.prod-head {
+  padding:18px 18px 14px;
+  display:flex; gap:14px; align-items:flex-start;
+  border-bottom:1px solid var(--border);
+}
+.score-ring {
+  width:66px; height:66px; flex-shrink:0;
+  border-radius:50%; border:3px solid;
+  display:flex; flex-direction:column;
+  align-items:center; justify-content:center;
+}
+.score-ring .num { font-size:21px; font-weight:900; font-family:'Playfair Display',serif; line-height:1; }
+.score-ring .lbl { font-size:8px; text-transform:uppercase; letter-spacing:0.5px; opacity:0.65; margin-top:1px; }
+.clean { border-color:#16a34a; color:#16a34a; background:#f0fdf4; }
+.mod   { border-color:#d97706; color:#d97706; background:#fffbeb; }
+.avoid { border-color:#dc2626; color:#dc2626; background:#fef2f2; }
+
+.prod-info h2 {
+  font-family:'Playfair Display',serif;
+  font-size:16px; color:var(--text); line-height:1.3; margin-bottom:3px;
+}
+.prod-brand { font-size:11px; color:var(--muted); margin-bottom:6px; }
+.verdict-pill {
+  display:inline-flex; align-items:center; gap:4px;
+  padding:3px 11px; border-radius:999px;
+  font-size:11px; font-weight:700;
+}
+.allergen-row { display:flex; flex-wrap:wrap; gap:5px; margin-top:6px; }
+.allergen-tag {
+  background:#fef3c7; color:#92400e;
+  font-size:10px; font-weight:700;
+  padding:2px 9px; border-radius:999px;
+}
+
+/* summary */
+.summary {
+  padding:12px 18px; font-size:13px; color:#374151;
+  line-height:1.6; border-bottom:1px solid var(--border);
+}
+
+/* tabs */
+.tabs {
+  display:flex; background:#f9fafb;
+  border-bottom:1px solid var(--border);
+}
+.tab {
+  flex:1; padding:10px 4px;
+  background:none; border:none; border-bottom:2.5px solid transparent;
+  font-family:'DM Sans',sans-serif; font-size:12px; font-weight:600;
+  color:var(--muted); cursor:pointer; transition:all 0.18s;
+}
+.tab.on { color:var(--g-deep); border-bottom-color:var(--g-light); }
+
+.panel { padding:14px 16px; display:none; }
+.panel.on { display:block; }
+
+/* flags */
+.flag {
+  padding:11px 13px; border-radius:10px;
+  margin-bottom:8px; border:1px solid;
+}
+.fh { background:#fef2f2; border-color:#fca5a5; }
+.fm { background:#fffbeb; border-color:#fcd34d; }
+.fl { background:#f9fafb; border-color:var(--border); }
+.flag-top {
+  display:flex; justify-content:space-between;
+  align-items:flex-start; gap:6px; margin-bottom:3px;
+}
+.flag-name { font-weight:700; font-size:13px; }
+.cat-tag {
+  font-size:9px; font-weight:700; padding:2px 8px;
+  border-radius:999px; white-space:nowrap; flex-shrink:0;
+}
+.sev-tag {
+  font-size:9px; font-weight:600; padding:2px 8px;
+  border-radius:999px; flex-shrink:0;
+}
+.flag-desc { font-size:12px; color:#4b5563; line-height:1.5; }
+
+/* positives */
+.pos-item {
+  display:flex; gap:9px; padding:9px 0;
+  border-bottom:1px solid var(--border);
+  font-size:13px; color:#374151; line-height:1.5; align-items:flex-start;
+}
+.pos-item:last-child { border:none; }
+.chk { color:#16a34a; flex-shrink:0; font-size:15px; margin-top:1px; }
+
+/* swaps */
+.swap-item {
+  display:flex; align-items:center; gap:9px;
+  padding:11px 12px; background:var(--g-pale);
+  border:1px solid var(--g-border); border-radius:10px;
+  margin-bottom:7px; font-size:13px; color:#15803d; font-weight:600;
+}
+.tip-box {
+  margin-top:10px; padding:12px;
+  background:#eff6ff; border:1px solid #bfdbfe;
+  border-radius:10px; font-size:12px; color:#1d4ed8; line-height:1.5;
+}
+.no-flags { text-align:center; padding:22px; color:#16a34a; font-size:14px; }
+
+/* nudge */
+.nudge {
+  padding:10px 14px; margin:0 16px 14px;
+  background:linear-gradient(135deg,var(--g-pale),#ecfdf5);
+  border:1px solid var(--g-border); border-radius:10px;
+  font-size:12px; color:#166534; text-align:center;
+}
+
+/* history pills */
+.history { margin-top:4px; }
+.hist-label { font-size:10px; color:var(--muted); text-transform:uppercase; letter-spacing:0.5px; font-weight:700; margin-bottom:7px; }
+.hist-pills { display:flex; flex-wrap:wrap; gap:6px; }
+.hist-pill {
+  display:flex; align-items:center; gap:5px;
+  background:#fff; border:1px solid var(--border); border-radius:999px;
+  padding:5px 12px; font-size:12px; color:var(--text);
+  cursor:pointer; font-family:'DM Sans',sans-serif;
+  transition:all 0.15s;
+}
+.hist-pill:active { background:#f3f4f6; }
+
+/* spinner */
+.spin {
+  display:inline-block; width:13px; height:13px;
+  border:2px solid currentColor; border-top-color:transparent;
+  border-radius:50%; animation:rotate 0.7s linear infinite;
+  vertical-align:middle; margin-right:5px;
+}
+@keyframes rotate { to { transform:rotate(360deg); } }
+
+/* camera denied */
+.cam-denied {
+  display:none; padding:24px; text-align:center;
+  color:#9ca3af; font-size:13px; line-height:1.6;
+}
+.cam-icon { font-size:38px; margin-bottom:8px; }
+
+/* install banner */
+.install-banner {
+  display:none; margin-bottom:14px;
+  background:linear-gradient(135deg,var(--g-deep),var(--g-mid));
+  border-radius:16px; padding:16px 18px;
+  box-shadow:0 4px 20px rgba(26,58,42,0.25);
+}
+.install-banner.show { display:flex; align-items:center; gap:14px; }
+.install-banner-text { flex:1; }
+.install-banner-text h3 { color:#fff; font-size:14px; font-weight:700; margin-bottom:3px; }
+.install-banner-text p  { color:#a7d9b8; font-size:12px; line-height:1.4; }
+.install-banner-btn {
+  background:#4ade80; color:var(--g-deep); border:none;
+  padding:10px 16px; border-radius:10px;
+  font-family:'DM Sans',sans-serif; font-size:13px; font-weight:700;
+  cursor:pointer; white-space:nowrap; flex-shrink:0;
+}
+
+/* quick chips */
+.chips { display:flex; flex-wrap:wrap; gap:6px; margin-bottom:14px; }
+.chip {
+  background:#fff; border:1px solid var(--border); border-radius:999px;
+  padding:5px 13px; font-size:12px; color:#374151; cursor:pointer;
+  font-family:'DM Sans',sans-serif; transition:all 0.15s;
+}
+.chip:active { background:#f3f4f6; border-color:#d1d5db; }
+</style>
+</head>
+<body>
+
+<div class="app">
+
+  <!-- Header -->
+  <div class="header">
+    <div class="header-left">
+      <div class="logo">🌿</div>
+      <div>
+        <div class="header-title">Ingredient Lens</div>
+        <div class="header-sub">Scan · Analyze · Eat Cleaner</div>
+      </div>
+    </div>
+    <button class="install-btn" id="headerInstallBtn">+ Install App</button>
+  </div>
+
+  <!-- Scroll area -->
+  <div class="scroll-area" id="scrollArea">
+
+    <!-- Install banner -->
+    <div class="install-banner" id="installBanner">
+      <div style="font-size:32px">📲</div>
+      <div class="install-banner-text">
+        <h3>Add to Home Screen</h3>
+        <p>Install for instant access — works like a native app, no Play Store needed.</p>
+      </div>
+      <button class="install-banner-btn" id="installBannerBtn">Install</button>
+    </div>
+
+    <!-- Scanner -->
+    <div class="scanner-card">
+      <div id="viewport">
+        <video id="scanVideo" autoplay muted playsinline
+               style="width:100%;height:100%;object-fit:cover;display:block;background:#0a1a10"></video>
+        <div class="scan-overlay">
+          <div class="scan-box"><b></b><div class="scan-line"></div></div>
+        </div>
+        <div class="cam-denied" id="camDenied" style="display:none;position:absolute;inset:0;background:#0a1a10;padding:20px;text-align:center;color:#9ca3af;font-size:13px;line-height:1.6">
+          <div class="cam-icon">📷</div>
+          Camera access denied — tap the lock icon in your browser address bar, allow Camera, and reload.
+        </div>
+      </div>
+      <div class="scan-hint" id="scanHint">Point at any food product barcode</div>
+      <div class="scan-controls">
+        <button class="btn btn-go" id="btnStart" onclick="startCam()">📷 &nbsp;Start Camera</button>
+        <button class="btn btn-stop" id="btnStop" onclick="stopCam()" style="display:none;flex:0 0 auto;padding:12px 16px">⏹ Stop</button>
+      </div>
+    </div>
+
+    <!-- Manual entry -->
+    <div class="divider">or enter barcode manually</div>
+    <div class="manual-row">
+      <input class="barcode-input" id="barcodeInput" type="number" inputmode="numeric"
+             placeholder="e.g. 810003512673" onkeydown="if(event.key==='Enter')lookup()"/>
+      <button class="btn-lookup" id="btnLookup" onclick="lookup()">Look up</button>
+    </div>
+
+    <!-- Quick chips -->
+    <div class="chips" id="chips">
+      <div class="chip" onclick="analyzeByName('Lay\'s Classic Chips')">Lay's Chips</div>
+      <div class="chip" onclick="analyzeByName('Oreo Cookies')">Oreos</div>
+      <div class="chip" onclick="analyzeByName('Kraft Mac and Cheese')">Kraft Mac</div>
+      <div class="chip" onclick="analyzeByName('Cheerios cereal')">Cheerios</div>
+      <div class="chip" onclick="analyzeByName('Nature Valley Granola Bar')">Nature Valley</div>
+    </div>
+
+    <!-- Status -->
+    <div class="status" id="status"></div>
+
+    <!-- Result -->
+    <div class="result" id="result">
+      <div class="result-card">
+        <div class="prod-head">
+          <div class="score-ring" id="scoreRing">
+            <span class="num" id="scoreNum">--</span>
+            <span class="lbl">Score</span>
+          </div>
+          <div class="prod-info">
+            <h2 id="prodName"></h2>
+            <div class="prod-brand" id="prodBrand"></div>
+            <div class="verdict-pill" id="verdictPill"></div>
+            <div class="allergen-row" id="allergenRow"></div>
+          </div>
+        </div>
+        <div class="summary" id="summary"></div>
+        <div class="tabs">
+          <button class="tab on"  onclick="tab('flags',this)">⚑ Concerns</button>
+          <button class="tab"     onclick="tab('positives',this)">✓ Positives</button>
+          <button class="tab"     onclick="tab('swaps',this)">🔄 Swaps</button>
+        </div>
+        <div class="panel on" id="panel-flags"></div>
+        <div class="panel"    id="panel-positives"></div>
+        <div class="panel"    id="panel-swaps"></div>
+        <div class="nudge">💬 Scan another product or enter a barcode to compare</div>
+      </div>
+
+      <!-- History -->
+      <div class="history" id="history"></div>
+    </div>
+
+  </div><!-- /scroll-area -->
+</div><!-- /app -->
+
+<script>
+// ─────────────────────────────────────────────
+// ⚙️  CONFIG — add your Anthropic API key here
+// ─────────────────────────────────────────────
+const API_KEY = 'YOUR_API_KEY_HERE';
+
+const SYSTEM = `You are an expert food ingredients analyst. Analyze the given product and respond ONLY with valid JSON — no markdown, no code fences, no preamble.
+
+JSON format:
+{
+  "score": <0-100>,
+  "verdict": "CLEAN"|"MODERATE"|"AVOID",
+  "productName": "<name>",
+  "summary": "<2-sentence plain English summary>",
+  "flags": [{"ingredient":"","category":"Seed Oil|Artificial Color|Preservative|Hidden Sugar|Artificial Sweetener|Emulsifier|Flavor Enhancer|Allergen","severity":"low|medium|high","explanation":""}],
+  "positives": [""],
+  "alternatives": [""],
+  "tip": "<one practical tip>",
+  "allergens": [""]
+}`;
+
+// ── State ─────────────────────────────────────
+let scanning = false, lastCode = null, history = [];
+let deferredInstall = null;
+
+// ── PWA Install ───────────────────────────────
+window.addEventListener('beforeinstallprompt', e => {
+  e.preventDefault(); deferredInstall = e;
+  document.getElementById('installBanner').classList.add('show');
+  document.getElementById('headerInstallBtn').classList.add('show');
+});
+
+async function installApp() {
+  if (!deferredInstall) return;
+  deferredInstall.prompt();
+  const { outcome } = await deferredInstall.userChoice;
+  if (outcome === 'accepted') {
+    document.getElementById('installBanner').classList.remove('show');
+    document.getElementById('headerInstallBtn').classList.remove('show');
+  }
+}
+document.getElementById('installBannerBtn').onclick = installApp;
+document.getElementById('headerInstallBtn').onclick = installApp;
+
+window.addEventListener('appinstalled', () => {
+  document.getElementById('installBanner').classList.remove('show');
+  document.getElementById('headerInstallBtn').classList.remove('show');
+});
+
+// ── Service Worker ────────────────────────────
+if ('serviceWorker' in navigator) {
+  navigator.serviceWorker.register('sw.js').catch(() => {});
+}
+
+// ── ZXing init ────────────────────────────────
+let zxingReader = null;
+let zxingReady = false;
+
+function initZXing() {
+  return new Promise((resolve, reject) => {
+    // Already loaded via module script
+    if (window.ZXingBrowser) {
+      try {
+        const hints = new Map();
+        hints.set(window.ZXingLibrary.DecodeHintType.POSSIBLE_FORMATS, [
+          window.ZXingLibrary.BarcodeFormat.EAN_13,
+          window.ZXingLibrary.BarcodeFormat.EAN_8,
+          window.ZXingLibrary.BarcodeFormat.UPC_A,
+          window.ZXingLibrary.BarcodeFormat.UPC_E,
+          window.ZXingLibrary.BarcodeFormat.CODE_128,
+        ]);
+        zxingReader = new window.ZXingBrowser.BrowserMultiFormatReader(hints);
+        zxingReady = true;
+        resolve();
+      } catch(e) { reject(e); }
+    } else {
+      // Wait up to 8s for module to load
+      let waited = 0;
+      const t = setInterval(() => {
+        waited += 200;
+        if (window.ZXingBrowser) {
+          clearInterval(t);
+          try {
+            zxingReader = new window.ZXingBrowser.BrowserMultiFormatReader();
+            zxingReady = true;
+            resolve();
+          } catch(e) { reject(e); }
+        } else if (waited > 8000) {
+          clearInterval(t);
+          reject(new Error('ZXing timed out'));
+        }
+      }, 200);
+    }
+  });
+}
+
+// ── Scanner ───────────────────────────────────
+async function startCam() {
+  setStatus('<span class="spin"></span> Starting camera…', 'loading');
+  document.getElementById('btnStart').style.display = 'none';
+  document.getElementById('btnStop').style.display = 'flex';
+
+  try {
+    // Init ZXing if not done yet
+    if (!zxingReady) await initZXing();
+
+    // Request camera permission explicitly first
+    const stream = await navigator.mediaDevices.getUserMedia({
+      video: { facingMode: 'environment', width: { ideal: 1280 }, height: { ideal: 720 } }
+    });
+    stream.getTracks().forEach(t => t.stop()); // release, ZXing will re-acquire
+
+    const videoEl = document.getElementById('scanVideo');
+
+    scanning = true;
+    setStatus('🎯 Aim at barcode and hold steady', 'scanning');
+    document.getElementById('scanHint').textContent = 'Scanning — hold steady…';
+
+    await zxingReader.decodeFromConstraints(
+      { video: { facingMode: 'environment' } },
+      videoEl,
+      (result, err) => {
+        if (result && scanning) {
+          const code = result.getText();
+          if (code && code !== lastCode) {
+            lastCode = code;
+            stopCam();
+            lookupBarcode(code);
+          }
+        }
+        // Ignore NotFoundException — it fires continuously while scanning
+      }
+    );
+
+  } catch(e) {
+    console.error('Camera error:', e);
+    const msg = e.name === 'NotAllowedError'
+      ? '📷 Camera permission denied — tap the 🔒 lock icon in your browser address bar → Permissions → Allow Camera, then reload.'
+      : e.name === 'NotFoundError'
+      ? '📷 No camera found on this device.'
+      : `Camera error: ${e.message}. Try manual entry below.`;
+    document.getElementById('camDenied').style.display = 'block';
+    document.getElementById('camDenied').innerHTML = `<div class="cam-icon">📷</div>${msg}`;
+    setStatus(msg, 'error');
+    document.getElementById('btnStart').style.display = 'flex';
+    document.getElementById('btnStop').style.display = 'none';
+  }
+}
+
+function stopCam() {
+  if (zxingReader && scanning) {
+    try { zxingReader.reset(); } catch(e) {}
+  }
+  scanning = false;
+  const v = document.getElementById('scanVideo');
+  if (v && v.srcObject) {
+    v.srcObject.getTracks().forEach(t => t.stop());
+    v.srcObject = null;
+  }
+  document.getElementById('btnStart').style.display = 'flex';
+  document.getElementById('btnStop').style.display = 'none';
+  document.getElementById('scanHint').textContent = 'Point at any food product barcode';
+  setStatus('', '');
+}
+
+// ── Manual lookup ─────────────────────────────
+function lookup() {
+  const v = document.getElementById('barcodeInput').value.trim();
+  if (!v) { setStatus('Please enter a barcode number.', 'error'); return; }
+  lookupBarcode(v);
+}
+
+// ── Open Food Facts ───────────────────────────
+async function lookupBarcode(code) {
+  setStatus(`<span class="spin"></span> Looking up ${code}…`, 'loading');
+  document.getElementById('btnLookup').disabled = true;
+
+  try {
+    const r = await fetch(`https://world.openfoodfacts.org/api/v0/product/${code}.json`);
+    const d = await r.json();
+    if (d.status !== 1) {
+      setStatus(`❌ Product not found for barcode ${code}. Try another.`, 'error');
+      document.getElementById('btnLookup').disabled = false;
+      return;
+    }
+    const p = d.product;
+    const name = p.product_name || p.product_name_en || 'Unknown Product';
+    const brand = p.brands || '';
+    const ingredients = p.ingredients_text || p.ingredients_text_en || '';
+    const nutri = p.nutriments || {};
+    setStatus(`✅ Found: <strong>${name}</strong> — analyzing…`, 'found');
+    await analyze(name, brand, ingredients, nutri);
+  } catch {
+    setStatus('Network error — check connection.', 'error');
+    document.getElementById('btnLookup').disabled = false;
+  }
+}
+
+// ── Analyze by name (chips) ───────────────────
+async function analyzeByName(name) {
+  setStatus(`<span class="spin"></span> Analyzing ${name}…`, 'loading');
+  await analyze(name, '', '', {});
+}
+
+// ── Claude Analysis ───────────────────────────
+async function analyze(name, brand, ingredients, nutri) {
+  const prompt = `Product: ${name}\nBrand: ${brand}\nIngredients: ${ingredients||'Not provided'}\nNutrition per 100g: Sugars ${nutri['sugars_100g']||'?'}g, Fat ${nutri['fat_100g']||'?'}g, Sat fat ${nutri['saturated-fat_100g']||'?'}g, Salt ${nutri['salt_100g']||'?'}g`;
+
+  try {
+    const r = await fetch('https://api.anthropic.com/v1/messages', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'x-api-key': API_KEY,
+        'anthropic-version': '2023-06-01',
+        'anthropic-dangerous-direct-browser-access': 'true'
+      },
+      body: JSON.stringify({
+        model: 'claude-sonnet-4-20250514',
+        max_tokens: 1000,
+        system: SYSTEM,
+        messages: [{ role: 'user', content: prompt }]
+      })
+    });
+    const d = await r.json();
+    const text = (d.content||[]).map(b=>b.text||'').join('');
+    const parsed = JSON.parse(text.replace(/```json|```/g,'').trim());
+    render(parsed, brand);
+    history.unshift({ name: parsed.productName, score: parsed.score, verdict: parsed.verdict, data: parsed });
+    if (history.length > 5) history.pop();
+    renderHistory();
+    setStatus('', '');
+    document.getElementById('btnLookup').disabled = false;
+    lastCode = null;
+    document.getElementById('scrollArea').scrollTo({ top: 0, behavior: 'smooth' });
+  } catch(e) {
+    setStatus('AI error — check your API key in index.html.', 'error');
+    document.getElementById('btnLookup').disabled = false;
+  }
+}
+
+// ── Render result ─────────────────────────────
+const VCFG = {
+  CLEAN:    { emoji:'✅', label:'Clean Choice',     cls:'clean', pc:'#16a34a', pb:'#f0fdf4' },
+  MODERATE: { emoji:'⚠️', label:'Use with Caution', cls:'mod',   pc:'#d97706', pb:'#fffbeb' },
+  AVOID:    { emoji:'❌', label:'Better Avoided',   cls:'avoid', pc:'#dc2626', pb:'#fef2f2' }
+};
+const CCAT = {
+  'Seed Oil':'#f97316','Artificial Color':'#a855f7','Preservative':'#ef4444',
+  'Hidden Sugar':'#f59e0b','Artificial Sweetener':'#ec4899',
+  'Emulsifier':'#6366f1','Flavor Enhancer':'#14b8a6','Allergen':'#84cc16'
+};
+
+function render(r, brand) {
+  const vc = VCFG[r.verdict] || VCFG.MODERATE;
+
+  const ring = document.getElementById('scoreRing');
+  ring.className = `score-ring ${vc.cls}`;
+  document.getElementById('scoreNum').textContent = r.score;
+
+  document.getElementById('prodName').textContent = r.productName;
+  document.getElementById('prodBrand').textContent = brand;
+
+  const pill = document.getElementById('verdictPill');
+  pill.textContent = `${vc.emoji} ${vc.label}`;
+  pill.style.background = vc.pb; pill.style.color = vc.pc;
+
+  document.getElementById('allergenRow').innerHTML =
+    (r.allergens||[]).map(a=>`<span class="allergen-tag">⚠ ${a}</span>`).join('');
+
+  document.getElementById('summary').textContent = r.summary;
+
+  // Flags
+  const fp = document.getElementById('panel-flags');
+  if (!r.flags?.length) {
+    fp.innerHTML = '<div class="no-flags">🎉 No major concerns found!</div>';
+  } else {
+    fp.innerHTML = r.flags.map(f => {
+      const cc = CCAT[f.category]||'#6b7280';
+      const sc = f.severity==='high'?'fh':f.severity==='medium'?'fm':'fl';
+      const sl = f.severity==='high'?'High Concern':f.severity==='medium'?'Moderate':'Low';
+      const scolor = f.severity==='high'?'#dc2626':f.severity==='medium'?'#d97706':'#6b7280';
+      return `<div class="flag ${sc}">
+        <div class="flag-top">
+          <div>
+            <span class="cat-tag" style="background:${cc}22;color:${cc}">${f.category}</span>
+            <span class="flag-name" style="margin-left:5px">${f.ingredient}</span>
+          </div>
+          <span class="sev-tag" style="background:${scolor}18;color:${scolor}">${sl}</span>
+        </div>
+        <div class="flag-desc">${f.explanation}</div>
+      </div>`;
+    }).join('');
+  }
+
+  // Positives
+  document.getElementById('panel-positives').innerHTML =
+    (r.positives||[]).map(p=>`<div class="pos-item"><span class="chk">✓</span>${p}</div>`).join('')||
+    '<div class="no-flags" style="color:#6b7280">No notable positives.</div>';
+
+  // Swaps
+  document.getElementById('panel-swaps').innerHTML =
+    (r.alternatives||[]).map(a=>`<div class="swap-item">🌿 ${a}</div>`).join('') +
+    (r.tip?`<div class="tip-box">💡 <strong>Tip:</strong> ${r.tip}</div>`:'');
+
+  document.getElementById('result').classList.add('show');
+  tab('flags', document.querySelector('.tab'));
+}
+
+// ── History ───────────────────────────────────
+function renderHistory() {
+  if (history.length < 2) return;
+  const el = document.getElementById('history');
+  el.innerHTML = `<div class="hist-label">Recent Scans</div><div class="hist-pills">${
+    history.slice(1).map((h,i)=>{
+      const vc = VCFG[h.verdict]||VCFG.MODERATE;
+      return `<div class="hist-pill" onclick="rerender(${i+1})">
+        <span style="color:${vc.pc}">${vc.emoji}</span>
+        ${h.name} <strong style="color:${vc.pc}">${h.score}</strong>
+      </div>`;
+    }).join('')
+  }</div>`;
+}
+function rerender(i) { render(history[i].data, ''); }
+
+// ── Tabs ──────────────────────────────────────
+function tab(name, btn) {
+  document.querySelectorAll('.tab').forEach(b=>b.classList.remove('on'));
+  document.querySelectorAll('.panel').forEach(p=>p.classList.remove('on'));
+  if (btn) btn.classList.add('on');
+  document.getElementById('panel-'+name).classList.add('on');
+}
+
+// ── Status ────────────────────────────────────
+function setStatus(msg, type) {
+  const el = document.getElementById('status');
+  el.innerHTML = msg;
+  el.className = 'status' + (msg ? ' show '+type : '');
+}
+</script>
+</body>
+</html>
