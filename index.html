@@ -382,6 +382,16 @@ html, body {
 .nf-actions .btn { padding:11px; }
 .btn-ghost { background:#f3f4f6; color:#374151; }
 
+/* allergen preference + alert */
+.prefs { background:#fff; border:1px solid var(--border); border-radius:12px; padding:10px 12px; margin-bottom:14px; font-size:12px; color:#374151; }
+.prefs summary { cursor:pointer; font-weight:700; }
+.prefs input { width:100%; margin-top:8px; padding:10px 12px; border:2px solid var(--border); border-radius:10px; font-family:'DM Sans',sans-serif; font-size:14px; outline:none; }
+.prefs input:focus { border-color:var(--g-mid); }
+.prefs small { display:block; margin-top:6px; color:var(--muted); line-height:1.4; }
+.allergy-alert { display:none; margin:12px 16px 0; padding:10px 12px; border-radius:10px; background:#fef2f2; border:1px solid #fca5a5; color:#b91c1c; font-size:13px; font-weight:600; line-height:1.4; }
+.allergy-alert.show { display:block; }
+.hist-clear { background:none; border:none; color:var(--muted); font-size:11px; text-decoration:underline; cursor:pointer; margin-top:8px; font-family:'DM Sans',sans-serif; }
+
 /* quick chips */
 .chips { display:flex; flex-wrap:wrap; gap:6px; margin-bottom:14px; }
 .chip {
@@ -449,6 +459,13 @@ html, body {
       <button class="btn-lookup" id="btnLookup" onclick="lookup()">Look up</button>
     </div>
 
+    <!-- Preferences (stored on this device only) -->
+    <details class="prefs" id="prefs">
+      <summary>⚙️ My allergens <span id="prefsCount"></span></summary>
+      <input id="allergenInput" type="text" maxlength="200" placeholder="e.g. peanut, milk, soy" oninput="savePrefs()"/>
+      <small>Saved only on this device. Matching is a convenience check against the ingredient text, always read the package label.</small>
+    </details>
+
     <!-- Quick chips -->
     <div class="chips" id="chips">
       <div class="chip" onclick="lookupBarcode('028400090896')">Doritos</div>
@@ -488,6 +505,7 @@ html, body {
             <div class="allergen-row" id="allergenRow"></div>
           </div>
         </div>
+        <div class="allergy-alert" id="allergyAlert"></div>
         <div class="summary" id="summary"></div>
         <div class="tabs">
           <button class="tab on"  onclick="tab('flags',this)">⚑ Concerns</button>
@@ -501,10 +519,10 @@ html, body {
         <div class="panel"    id="panel-score"></div>
         <div class="nudge">💬 Scan another product or enter a barcode to compare</div>
       </div>
-
-      <!-- History -->
-      <div class="history" id="history"></div>
     </div>
+
+    <!-- History (saved on this device) -->
+    <div class="history" id="history"></div>
 
   </div><!-- /scroll-area -->
 </div><!-- /app -->
@@ -515,6 +533,16 @@ const esc = v => String(v ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt
 
 // ── State ─────────────────────────────────────
 let scanning = false, lastCode = null, scanControls = null, history = [];
+
+// ── On-device storage (localStorage, never leaves the phone) ──
+const HIST_KEY = 'il_history_v1', PREFS_KEY = 'il_prefs_v1', HIST_MAX = 20;
+const store = {
+  get(k, fallback) { try { const v = localStorage.getItem(k); return v ? JSON.parse(v) : fallback; } catch { return fallback; } },
+  set(k, v) { try { localStorage.setItem(k, JSON.stringify(v)); } catch {} },
+  del(k) { try { localStorage.removeItem(k); } catch {} }
+};
+history = store.get(HIST_KEY, []);
+let allergens = store.get(PREFS_KEY, { allergens: [] }).allergens || [];
 let deferredInstall = null;
 
 // ── PWA Install ───────────────────────────────
@@ -737,10 +765,13 @@ async function analyze(payload) {
       body: JSON.stringify(payload)
     });
     const d = await r.json().catch(() => ({}));
-    if (!r.ok) return fail(r.status === 429 ? 'AI is rate-limited — wait a moment and retry.' : `AI error: ${esc(d.error || r.status)}`);
+    if (!r.ok) return fail(r.status === 429 ? esc(d.error || 'Too many requests. Please wait a few minutes.') : `AI error: ${esc(d.error || r.status)}`);
+    d.sourceIngredients = String(payload.ingredients || '').slice(0, 4000);
     render(d, payload.brand);
-    history.unshift({ name: d.productName, score: d.score, verdict: d.verdict, brand: payload.brand, data: d });
-    if (history.length > 5) history.pop();
+    history = history.filter(h => h.name !== d.productName);
+    history.unshift({ name: d.productName, score: d.score, verdict: d.verdict, brand: payload.brand, data: d, ts: Date.now() });
+    if (history.length > HIST_MAX) history.length = HIST_MAX;
+    store.set(HIST_KEY, history);
     renderHistory();
     setStatus('', '');
     document.getElementById('btnLookup').disabled = false;
@@ -779,6 +810,11 @@ function render(r, brand) {
 
   document.getElementById('allergenRow').innerHTML =
     (r.allergens||[]).map(a=>`<span class="allergen-tag">⚠ ${esc(a)}</span>`).join('');
+
+  const hits = allergenMatches(r);
+  const alertEl = document.getElementById('allergyAlert');
+  alertEl.textContent = hits.length ? `🚨 May contain your allergen${hits.length > 1 ? 's' : ''}: ${hits.join(', ')}. Check the package label.` : '';
+  alertEl.classList.toggle('show', hits.length > 0);
 
   document.getElementById('summary').textContent = r.summary;
 
@@ -827,19 +863,41 @@ function render(r, brand) {
 
 // ── History ───────────────────────────────────
 function renderHistory() {
-  if (history.length < 2) return;
   const el = document.getElementById('history');
-  el.innerHTML = `<div class="hist-label">Recent Scans</div><div class="hist-pills">${
-    history.slice(1).map((h,i)=>{
-      const vc = VCFG[h.verdict]||VCFG.MODERATE;
-      return `<div class="hist-pill" onclick="rerender(${i+1})">
+  if (!history.length) { el.innerHTML = ''; return; }
+  el.innerHTML = `<div class="hist-label">Recent Scans (saved on this device)</div><div class="hist-pills">${
+    history.map((h, i) => {
+      const vc = VCFG[h.verdict] || VCFG.MODERATE;
+      return `<div class="hist-pill" onclick="rerender(${i})">
         <span style="color:${vc.pc}">${vc.emoji}</span>
-        ${esc(h.name)} <strong style="color:${vc.pc}">${h.score}</strong>
+        ${esc(h.name)} <strong style="color:${vc.pc}">${esc(h.score)}</strong>
       </div>`;
     }).join('')
-  }</div>`;
+  }</div><button class="hist-clear" onclick="clearHistory()">Clear history</button>`;
 }
-function rerender(i) { render(history[i].data, history[i].brand || ''); }
+function rerender(i) {
+  render(history[i].data, history[i].brand || '');
+  document.getElementById('scrollArea').scrollTo({ top: 0, behavior: 'smooth' });
+}
+function clearHistory() { history = []; store.del(HIST_KEY); renderHistory(); }
+
+// ── Preferences: allergens ────────────────────
+function savePrefs() {
+  const raw = document.getElementById('allergenInput').value;
+  allergens = raw.split(',').map(x => x.trim().toLowerCase()).filter(x => x.length >= 3).slice(0, 10);
+  store.set(PREFS_KEY, { allergens });
+  document.getElementById('prefsCount').textContent = allergens.length ? `(${allergens.length})` : '';
+}
+function allergenMatches(r) {
+  if (!allergens.length) return [];
+  const hay = [r.sourceIngredients, ...(r.allergens || []), ...(r.flags || []).map(f => f.ingredient)].join(' ').toLowerCase();
+  return allergens.filter(a => hay.includes(a));
+}
+function initPrefs() {
+  document.getElementById('allergenInput').value = allergens.join(', ');
+  document.getElementById('prefsCount').textContent = allergens.length ? `(${allergens.length})` : '';
+  renderHistory();
+}
 
 // ── Tabs ──────────────────────────────────────
 function tab(name, btn) {
@@ -848,6 +906,8 @@ function tab(name, btn) {
   if (btn) btn.classList.add('on');
   document.getElementById('panel-'+name).classList.add('on');
 }
+
+initPrefs();
 
 // ── Status ────────────────────────────────────
 function setStatus(msg, type) {

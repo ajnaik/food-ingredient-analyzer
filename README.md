@@ -8,15 +8,16 @@ Scan a food barcode, pull the product's real ingredient data, and get a plain-En
 
 ```mermaid
 flowchart LR
-    A[Phone camera / manual barcode] --> B[Browser PWA]
-    B -->|barcode| C[Open Food Facts API]
-    C -->|ingredients, Nutri-Score, NOVA, nutrition| B
-    B -->|product data| D[Vercel serverless /api/analyze]
-    D -->|rule-based score from Nutri-Score, NOVA, nutrients, additives| D
-    D -->|forced tool call, temperature 0| E[Claude Haiku 4.5]
-    E -->|schema-validated explanation| D
-    D --> B
-    B --> F[Score, flags, positives, swaps]
+    A["Phone camera or manual barcode"] --> B["Browser PWA"]
+    B -->|"barcode"| C["Open Food Facts API"]
+    C -->|"ingredients, Nutri-Score, NOVA, nutrition"| B
+    B -->|"product data"| D["Vercel function: api/analyze"]
+    D -->|"structured data"| G["Rule-based scorer"]
+    G -->|"score and breakdown"| D
+    D -->|"forced tool call, temperature 0"| E["Claude Haiku 4.5"]
+    E -->|"schema-validated explanation"| D
+    D -->|"score and explanation"| B
+    B --> F["Score, flags, positives, swaps"]
 ```
 
 1. **Scan:** the browser's native `BarcodeDetector` reads the barcode (Chrome on Android). Browsers without it fall back to ZXing.

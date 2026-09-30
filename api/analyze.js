@@ -1,5 +1,6 @@
 // Vercel serverless function: keeps the Anthropic key server-side.
 const { computeScore } = require('../lib/score');
+const { checkRateLimit } = require('../lib/ratelimit');
 const MODEL = process.env.ANALYZE_MODEL || 'claude-haiku-4-5-20251001';
 
 const SYSTEM = `You are a food ingredients analyst. Given a product's ingredients, nutrition data and a precomputed health score, call the report_analysis tool.
@@ -43,6 +44,11 @@ const clip = (v, n) => String(v ?? '').slice(0, n);
 
 module.exports = async (req, res) => {
   if (req.method !== 'POST') return res.status(405).json({ error: 'POST only' });
+  const rl = await checkRateLimit(req);
+  if (!rl.allowed) {
+    res.setHeader('Retry-After', String(rl.retryAfter));
+    return res.status(429).json({ error: `Too many requests. Try again in ${Math.ceil(rl.retryAfter / 60)} min.` });
+  }
   if (!process.env.ANTHROPIC_API_KEY) return res.status(500).json({ error: 'Server is missing ANTHROPIC_API_KEY' });
 
   const b = req.body || {};
