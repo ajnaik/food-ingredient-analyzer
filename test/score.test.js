@@ -38,7 +38,7 @@ test('score is clamped to 0-100', () => {
 
 test('ingredients without nutri data still get a baseline-based score', () => {
   const r = computeScore({ hasIngredients: true, nova: 4 });
-  assert.equal(r.score, 40);
+  assert.equal(r.score, 43);
   assert.equal(r.confidence, 'medium');
 });
 

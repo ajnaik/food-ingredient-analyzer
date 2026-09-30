@@ -12,16 +12,17 @@ flowchart LR
     B -->|barcode| C[Open Food Facts API]
     C -->|ingredients, Nutri-Score, NOVA, nutrition| B
     B -->|product data| D[Vercel serverless /api/analyze]
+    D -->|rule-based score from Nutri-Score, NOVA, nutrients, additives| D
     D -->|forced tool call, temperature 0| E[Claude Haiku 4.5]
-    E -->|schema-validated JSON| D
+    E -->|schema-validated explanation| D
     D --> B
     B --> F[Score, flags, positives, swaps]
 ```
 
 1. **Scan:** the browser's native `BarcodeDetector` reads the barcode (Chrome on Android). Browsers without it fall back to ZXing.
 2. **Ground the AI in real data:** ingredients and nutrition come from [Open Food Facts](https://world.openfoodfacts.org), a crowd-sourced food database, so the model analyses a real label instead of guessing from a product name.
-3. **Analyse on the server:** the page sends the product data to `/api/analyze`, which calls Claude.
-4. **Render:** the structured result is shown as a score ring, categorised concerns, positives and swaps.
+3. **Score, then explain, on the server:** `/api/analyze` computes the 0–100 score with deterministic rules (`lib/score.js`), then asks Claude to explain it: a summary, flagged ingredients, positives and swaps.
+4. **Render:** the result is shown as a score ring, categorised concerns, positives, swaps and a **Score tab** that lists exactly how the number was built.
 
 ## Design decisions
 
@@ -29,6 +30,7 @@ flowchart LR
 |---|---|
 | **API key lives on the server**, not in the page | A browser-side key can be copied from DevTools by anyone. The serverless function holds it as an environment variable and validates and size-limits input. |
 | **Forced tool call for structured output** | Claude must call a `report_analysis` tool with a JSON schema (score range, verdict enum, flag categories). This replaces parsing free text with regexes and removes malformed-JSON failures. |
+| **Score is computed in code, not by the LLM** | An earlier version let Claude set the score and it bunched bad products together (Oreo, Coca-Cola and Nutella all got 28). Rules over Nutri-Score, NOVA, sugar, saturated fat, salt and additive count make it repeatable, unit-tested and explainable. The LLM only explains it. |
 | **Grounding rules in the system prompt** | The model may flag only ingredients that literally appear in the supplied list. With no list, it returns a neutral score and says so instead of inventing flags. |
 | **Temperature 0** | Keeps results as repeatable as possible for a demo and for testing. |
 | **Haiku 4.5 by default** | The task is short and structured, so a small fast model gives ~5 s responses at a fraction of a cent per scan. The model can be changed with the `ANALYZE_MODEL` environment variable. |
@@ -38,22 +40,23 @@ flowchart LR
 
 ## Tested behaviour
 
-- Live API tested against real Open Food Facts products (Oreo, Coca-Cola, Nutella): every flagged ingredient was found in the real ingredient list.
-- A product with no ingredient data returns a neutral score of 50 and no flags.
-- A plain-oats product scores 95 (CLEAN).
+- `npm test` runs 8 unit tests on the scoring module: determinism, clamping to 0–100, missing data, garbage input, and that different bad products no longer collapse to one score.
+- Live API tested against real Open Food Facts products: every flagged ingredient was found in the real ingredient list.
+- Example scores: Oreo 17, Nutella 18, Coca-Cola 24, Doritos 47, plain oats 95. A product with no data returns a neutral 50 with low confidence.
 - Camera scanning tested on Chrome for Android.
 
 ## Known limitations (honest list)
 
-- **The score is LLM-generated and compressed.** Oreo, Coca-Cola and Nutella all scored 28, so it doesn't separate a cookie from a soda. The flag count can also vary by one between runs at temperature 0. This is the main thing to fix next (see below).
-- **Data quality depends on Open Food Facts.** Some products lack ingredients, and some are in other languages.
+- **The scoring weights are my judgment**, loosely modelled on Nutri-Score ideas, not a validated clinical standard. They are simple, visible in the Score tab and easy to change.
+- **Data quality depends on Open Food Facts.** Some products lack ingredients, Nutri-Score or NOVA, and some are in other languages. Low-data products get a low-confidence label.
+- **The AI explanation isn't machine-verified.** I checked flagged ingredients against the source list by hand on sample products; there is no automated evaluation yet.
 - **No authentication or rate limiting** on `/api/analyze` beyond input-size limits, so it isn't production-hardened.
 - **Not medical or dietary advice.** It is general information only.
 
 ## Roadmap
 
-1. **Deterministic scoring:** build the 0–100 score from Nutri-Score, NOVA group and additive counts, and use the LLM only for the explanation. This makes scores consistent, testable and cheap to explain.
-2. **Evaluation script:** run ~20 fixed barcodes and check score stability, schema validity, and that every flagged ingredient appears in the source text.
+1. **Evaluation script:** run ~20 fixed barcodes and check schema validity and that every flagged ingredient appears in the source text.
+2. **Provider-pluggable model layer** (for example an OpenAI-compatible gateway) for fallback and cost control.
 3. **Allergy and diet profile:** highlight products that conflict with the user's restrictions.
 4. **Per-barcode caching and rate limiting** for lower cost and abuse protection.
 5. **Compare mode:** scan two products side by side.
@@ -75,6 +78,8 @@ Camera access needs HTTPS (or `localhost`). Get an API key at <https://console.a
 ```
 index.html        UI, scanner, Open Food Facts lookup, rendering
 api/analyze.js    Serverless function: prompt, tool schema, Claude call
+lib/score.js      Deterministic scoring rules
+test/             Unit tests (npm test)
 sw.js             Service worker (network-first, versioned cache)
 manifest.json     PWA manifest
 icons/            App icons
@@ -82,4 +87,4 @@ icons/            App icons
 
 ## Tech
 
-Vanilla HTML/CSS/JS · Vercel serverless (Node) · Anthropic Claude API · Open Food Facts API · BarcodeDetector API with ZXing fallback · PWA
+Vanilla HTML/CSS/JS · Node test runner · Vercel serverless (Node) · Anthropic Claude API · Open Food Facts API · BarcodeDetector API with ZXing fallback · PWA
