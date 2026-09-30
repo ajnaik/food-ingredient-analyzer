@@ -42,7 +42,7 @@ flowchart LR
 
 - `npm test` runs 8 unit tests on the scoring module: determinism, clamping to 0–100, missing data, garbage input, and that different bad products no longer collapse to one score.
 - Live API tested against real Open Food Facts products: every flagged ingredient was found in the real ingredient list.
-- Example scores: Oreo 17, Nutella 18, Coca-Cola 24, Doritos 47, plain oats 95. A product with no data returns a neutral 50 with low confidence.
+- Example scores: Oreo 13, Kraft Mac 24, Nutella 25, Coca-Cola 26, Doritos 48, plain oats 95. A product with no data returns a neutral 50 with low confidence.
 - Camera scanning tested on Chrome for Android.
 
 ## Known limitations (honest list)
